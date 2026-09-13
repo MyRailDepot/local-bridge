@@ -15,12 +15,25 @@ export type SpawnFn = (
 
 // `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
 // Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
-// event instead of ever running anything.
+// event instead of ever running anything. mac/Linux never need this.
 const defaultSpawn: SpawnFn = (command, args, options) => nodeSpawn(command, args, options);
+
+// When `shell: true`, Node joins `[file, ...args]` into a single command-line string using plain
+// spaces, with no automatic escaping — so an argument containing whitespace (e.g. an install path
+// like "/Users/John Doe/...") would get silently word-split by the shell. Quoting is only needed
+// (and only safe) on that shell path: a non-shell spawn passes each array element as an atomic
+// argv entry with zero interpretation, so injecting literal `"` characters there would corrupt the
+// argument instead of protecting it.
+function quoteIfNeeded(arg: string): string {
+  return /\s/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg;
+}
 
 function runNpm(args: string[], installDir: string, spawnImpl: SpawnFn): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnImpl('npm', args, { cwd: installDir, shell: true });
+    // Only Windows needs `shell: true` (to resolve npm.cmd) — see the comment on `defaultSpawn`.
+    const useShell = process.platform === 'win32';
+    const spawnArgs = useShell ? args.map(quoteIfNeeded) : args;
+    const child = spawnImpl('npm', spawnArgs, { cwd: installDir, shell: useShell });
     let stderr = '';
     child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     child.on('error', (err) => rejectPromise(err));
