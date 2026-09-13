@@ -3,8 +3,6 @@ import { getBridgeConfig, setBridgeConfig } from '../bridge-config';
 import { detectLocalIp, buildLocalUrl } from '../lib/network';
 import { BridgeServerService } from './bridge-server.service';
 
-const BRIDGE_ID            = process.env['BRIDGE_ID']!;
-const BRIDGE_API_KEY       = process.env['BRIDGE_API_KEY']!;
 const BRIDGE_PORT          = parseInt(process.env['BRIDGE_PORT'] ?? '3000', 10);
 const SAAS_BASE_URL        = process.env['SAAS_BASE_URL'] ?? 'https://myraildepot.com';
 const IP_CHECK_INTERVAL_MS = 10_000;
@@ -43,7 +41,11 @@ export class RegistrationService implements OnModuleInit, OnModuleDestroy {
       const res = await fetch(`${SAAS_BASE_URL}/bridgeAnnounce`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bridgeId: BRIDGE_ID, apiKey: BRIDGE_API_KEY, localUrl: newUrl }),
+        body: JSON.stringify({
+          bridgeId: process.env['BRIDGE_ID'],
+          apiKey: process.env['BRIDGE_API_KEY'],
+          localUrl: newUrl,
+        }),
       });
 
       if (!res.ok) {

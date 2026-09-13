@@ -18,7 +18,7 @@
     "start": "node dist/main.js",
     "build": "nest build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test --import tsx/esm src/**/*.spec.ts"
+    "test": "tsx --test src/**/*.spec.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.2.3",
