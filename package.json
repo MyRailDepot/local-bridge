@@ -1,7 +1,7 @@
 {
   "name": "@myraildepot/local-bridge",
   "version": "0.1.0",
-  "description": "Local bridge for MyRailDepot — runs on your machine, talks to your Z21 command station and to the cloud.",
+  "description": "Local bridge for MyRailDepot — runs on your machine, talks to your DCC command station and to the cloud.",
   "license": "MIT",
   "repository": { "type": "git", "url": "git+https://github.com/MyRailDepot/local-bridge.git" },
   "publishConfig": { "access": "public" },
