@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   publish:
     if: github.repository == 'MyRailDepot/local-bridge'
@@ -24,6 +28,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm lint
-      - run: pnpm publish --access public --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # pnpm's OIDC trusted-publishing support is unreliable (broken again on pnpm 11 as of
+      # this writing), so publish with npm directly; pnpm is still used for everything else.
+      - run: npm install -g npm@latest
+      - run: npm publish --access public
