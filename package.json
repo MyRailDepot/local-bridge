@@ -12,7 +12,8 @@
   },
   "private": false,
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "packageManager": "pnpm@9.0.0",
   "main": "dist/main.js",
