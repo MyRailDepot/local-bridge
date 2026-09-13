@@ -26,7 +26,7 @@
     "start": "node dist/main.js",
     "build": "nest build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/**/*.spec.ts",
+    "test": "tsx --test 'src/**/*.spec.ts'",
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {
