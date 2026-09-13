@@ -1,4 +1,4 @@
-import { describe, it, afterEach, mock } from 'node:test';
+import { describe, it, after, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,14 +6,20 @@ import { join } from 'node:path';
 import { ensureCredentials } from './enroll.ts';
 
 const SAAS_BASE_URL = 'https://myraildepot.com';
+const tempDirs: string[] = [];
 
 function makeEnvPath(): string {
   const dir = mkdtempSync(join(tmpdir(), 'local-bridge-enroll-test-'));
+  tempDirs.push(dir);
   return join(dir, '.env');
 }
 
 afterEach(() => {
   mock.reset();
+});
+
+after(() => {
+  for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('ensureCredentials', () => {

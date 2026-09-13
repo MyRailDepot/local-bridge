@@ -15,6 +15,7 @@ import { ensureCredentials } from './enrollment/enroll';
 const BRIDGE_PORT   = parseInt(process.env['BRIDGE_PORT'] ?? '3000', 10);
 const SAAS_BASE_URL = process.env['SAAS_BASE_URL'] ?? 'https://myraildepot.com';
 // Not consumed anywhere yet — kept as an override hook for a future prod/dev project split.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const FIREBASE_PROJECT_ID = process.env['FIREBASE_PROJECT_ID'] ?? 'myraildepot';
 
 const ALLOWED_ORIGINS = new Set([
