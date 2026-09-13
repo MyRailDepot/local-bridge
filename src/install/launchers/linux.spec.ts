@@ -28,6 +28,19 @@ describe('buildDesktopEntry', () => {
     assert.match(entry, /cd '\/home\/nico\/\.myraildepot\/local-bridge'/);
     assert.match(entry, /\.\/node_modules\/\.bin\/local-bridge/);
   });
+
+  it('escapes single quotes in the install dir path for bash', () => {
+    // Realistic on Linux: usernames/paths can contain an apostrophe, e.g. "/home/o'brien/...".
+    // A bash single-quoted string literal escapes an embedded `'` as `'\''` (end quote, escaped quote,
+    // start quote) — an unescaped one would terminate the string early and let the rest of the path
+    // run as a command.
+    const entry = buildDesktopEntry(
+      "/home/o'brien/.myraildepot/local-bridge",
+      "/home/o'brien/.myraildepot/local-bridge/icon.png",
+    );
+    assert.match(entry, /cd '\/home\/o'\\''brien\/\.myraildepot\/local-bridge'/);
+    assert.match(entry, /Icon=\/home\/o'brien\/\.myraildepot\/local-bridge\/icon\.png/);
+  });
 });
 
 describe('installLinuxLauncher', () => {
