@@ -4,20 +4,30 @@ import { printWarning } from '../lib/console-ui';
 interface MinimalChildProcess {
   stderr: { on(event: 'data', listener: (chunk: Buffer) => void): void } | null;
   on(event: 'error', listener: (err: Error) => void): void;
-  on(event: 'exit', listener: (code: number | null) => void): void;
+  on(event: 'close', listener: (code: number | null) => void): void;
 }
 
-export type SpawnFn = (command: string, args: string[], options: { cwd: string }) => MinimalChildProcess;
+export type SpawnFn = (
+  command: string,
+  args: string[],
+  options: { cwd: string; shell: boolean },
+) => MinimalChildProcess;
 
+// `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
+// Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
+// event instead of ever running anything.
 const defaultSpawn: SpawnFn = (command, args, options) => nodeSpawn(command, args, options);
 
 function runNpm(args: string[], installDir: string, spawnImpl: SpawnFn): Promise<void> {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawnImpl('npm', args, { cwd: installDir });
+    const child = spawnImpl('npm', args, { cwd: installDir, shell: true });
     let stderr = '';
     child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     child.on('error', (err) => rejectPromise(err));
-    child.on('exit', (code) => {
+    // Listen on 'close' rather than 'exit': per Node's docs, stdio streams "might still be open"
+    // when 'exit' fires, while 'close' fires only once stdout/stderr are fully flushed — so 'exit'
+    // risks under-reporting the stderr collected above.
+    child.on('close', (code) => {
       if (code === 0) resolvePromise();
       else rejectPromise(new Error(`npm ${args.join(' ')} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
     });
