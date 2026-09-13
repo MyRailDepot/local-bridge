@@ -1,6 +1,6 @@
 # @myraildepot/local-bridge
 
-A small server that runs on your own computer and connects your Z21 DCC command station to
+A small server that runs on your own computer and connects your DCC command station to
 [MyRailDepot](https://myraildepot.com). It talks to your command station over your local network and
 relays commands from the MyRailDepot app to your layout.
 
