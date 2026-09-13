@@ -1,4 +1,4 @@
-import { describe, it, after } from 'node:test';
+import { describe, it, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -138,16 +138,59 @@ describe('selfInstallIfNeeded — install failure', () => {
       });
       return child;
     };
+    const errorCalls: string[] = [];
+    mock.method(console, 'error', (...args: unknown[]) => { errorCalls.push(args.join(' ')); });
 
-    await assert.doesNotReject(() => selfInstallIfNeeded({
-      currentPackageRoot: '/some/npx/cache/path',
-      assetsDir,
-      credentials: { bridgeId: 'b1', apiKey: 'k1' },
-      platform: 'linux',
-      homeDir,
-      npmSpawnImpl: failingSpawn,
-    }));
+    try {
+      await assert.doesNotReject(() => selfInstallIfNeeded({
+        currentPackageRoot: '/some/npx/cache/path',
+        assetsDir,
+        credentials: { bridgeId: 'b1', apiKey: 'k1' },
+        platform: 'linux',
+        homeDir,
+        npmSpawnImpl: failingSpawn,
+      }));
 
-    assert.equal(existsSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop')), false);
+      assert.equal(existsSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop')), false);
+      // The plan requires a failure here to be reported via printStepFailed (console.error) —
+      // an empty catch block would leave the two assertions above green while silently dropping
+      // this requirement.
+      assert.equal(errorCalls.length, 1);
+      assert.match(errorCalls[0]!, /offline/);
+    } finally {
+      mock.reset();
+    }
+  });
+
+  it('logs a failure and does not throw when launcher creation throws', async () => {
+    const homeDir = makeTempDir();
+    // Deliberately do NOT write icon.icns into assetsDir: installMacLauncher's
+    // copyFileSync(join(assetsDir, 'icon.icns'), ...) will throw ENOENT.
+    const assetsDir = makeTempDir();
+    const errorCalls: string[] = [];
+    mock.method(console, 'error', (...args: unknown[]) => { errorCalls.push(args.join(' ')); });
+
+    try {
+      await assert.doesNotReject(() => selfInstallIfNeeded({
+        currentPackageRoot: '/some/npx/cache/path',
+        assetsDir,
+        credentials: { bridgeId: 'b1', apiKey: 'k1' },
+        platform: 'darwin',
+        homeDir,
+        npmSpawnImpl: fakeNpmSpawn([]),
+      }));
+
+      // installMacLauncher creates the bundle's directory structure before the copyFileSync of
+      // icon.icns throws, so the .app directory itself can exist — what must NOT exist is the
+      // icon it never got to copy, i.e. the launcher was never fully/successfully installed.
+      assert.equal(
+        existsSync(join(homeDir, 'Applications', 'MyRailDepot Bridge.app', 'Contents', 'Resources', 'icon.icns')),
+        false,
+      );
+      assert.equal(errorCalls.length, 1);
+      assert.match(errorCalls[0]!, /icon\.icns/);
+    } finally {
+      mock.reset();
+    }
   });
 });
