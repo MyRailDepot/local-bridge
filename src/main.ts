@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// Load .env from apps/local-bridge before reading process.env
+// Load .env from cwd before reading process.env
 try { process.loadEnvFile(); } catch { /* no .env file, rely on system env */ }
 
+import { join } from 'node:path';
 import type { Server as HttpsServer } from 'node:https';
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
@@ -9,16 +10,12 @@ import { AppModule } from './app.module';
 import { setBridgeConfig } from './bridge-config';
 import { detectLocalIp, buildLocalUrl } from './lib/network';
 import { BridgeServerService } from './registration/bridge-server.service';
+import { ensureCredentials } from './enrollment/enroll';
 
-const BRIDGE_ID     = process.env['BRIDGE_ID']!;
-const BRIDGE_API_KEY = process.env['BRIDGE_API_KEY']!;
 const BRIDGE_PORT   = parseInt(process.env['BRIDGE_PORT'] ?? '3000', 10);
 const SAAS_BASE_URL = process.env['SAAS_BASE_URL'] ?? 'https://myraildepot.com';
-
-if (!BRIDGE_ID || !BRIDGE_API_KEY || !process.env['FIREBASE_PROJECT_ID']) {
-  console.error('[bridge] Missing required env vars: BRIDGE_ID, BRIDGE_API_KEY, and FIREBASE_PROJECT_ID must be set.');
-  process.exit(1);
-}
+// Not consumed anywhere yet — kept as an override hook for a future prod/dev project split.
+const FIREBASE_PROJECT_ID = process.env['FIREBASE_PROJECT_ID'] ?? 'myraildepot';
 
 const ALLOWED_ORIGINS = new Set([
   'https://app.myraildepot.com',
@@ -28,6 +25,25 @@ const ALLOWED_ORIGINS = new Set([
 ]);
 
 async function bootstrap(): Promise<void> {
+  let bridgeId: string;
+  let bridgeApiKey: string;
+  try {
+    const creds = await ensureCredentials({
+      envPath: join(process.cwd(), '.env'),
+      existingBridgeId: process.env['BRIDGE_ID'],
+      existingApiKey: process.env['BRIDGE_API_KEY'],
+      enrollmentToken: process.argv[2] ?? process.env['BRIDGE_ENROLLMENT_TOKEN'],
+      saasBaseUrl: SAAS_BASE_URL,
+    });
+    bridgeId = creds.bridgeId;
+    bridgeApiKey = creds.apiKey;
+    process.env['BRIDGE_ID'] = bridgeId;
+    process.env['BRIDGE_API_KEY'] = bridgeApiKey;
+  } catch (err) {
+    console.error(`[bridge] ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
+
   const localUrl = process.env['BRIDGE_URL'] ?? (() => {
     const ip = detectLocalIp();
     if (!ip) {
@@ -42,7 +58,7 @@ async function bootstrap(): Promise<void> {
   const announceRes = await fetch(`${SAAS_BASE_URL}/bridgeAnnounce`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ bridgeId: BRIDGE_ID, apiKey: BRIDGE_API_KEY, localUrl }),
+    body: JSON.stringify({ bridgeId, apiKey: bridgeApiKey, localUrl }),
   });
 
   if (!announceRes.ok) {
