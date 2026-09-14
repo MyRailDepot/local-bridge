@@ -194,6 +194,31 @@ describe('ensureCredentials', () => {
     assert.match(content, /^BRIDGE_API_KEY=key-new$/m);
   });
 
+  it('creates the parent directory when envPath points into one that does not exist yet', async () => {
+    mock.method(globalThis, 'fetch', (async () => ({
+      ok: true,
+      json: async () => ({ bridgeId: 'bridge-new', apiKey: 'key-new' }),
+    })) as unknown as typeof fetch);
+
+    const dir = mkdtempSync(join(tmpdir(), 'local-bridge-enroll-test-'));
+    tempDirs.push(dir);
+    // .myraildepot/local-bridge doesn't exist under this fresh temp dir — ensureCredentials must
+    // create it, the same way it would on a machine's very first-ever run.
+    const envPath = join(dir, '.myraildepot', 'local-bridge', '.env');
+
+    await ensureCredentials({
+      envPath,
+      existingBridgeId: undefined,
+      existingApiKey: undefined,
+      enrollmentToken: 'ABC123',
+      saasBaseUrl: SAAS_BASE_URL,
+    });
+
+    const content = readFileSync(envPath, 'utf8');
+    assert.match(content, /^BRIDGE_ID=bridge-new$/m);
+    assert.match(content, /^BRIDGE_API_KEY=key-new$/m);
+  });
+
   it('appends BRIDGE_ID/BRIDGE_API_KEY to a .env file that already has other content', async () => {
     mock.method(globalThis, 'fetch', (async () => ({
       ok: true,

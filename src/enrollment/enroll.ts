@@ -1,4 +1,5 @@
-import { appendFileSync, chmodSync, existsSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 export interface BridgeCredentials {
   bridgeId: string;
@@ -71,6 +72,10 @@ export async function ensureCredentials(opts: EnsureCredentialsOptions): Promise
   const { bridgeId, apiKey } = body;
 
   const line = `\nBRIDGE_ID=${bridgeId}\nBRIDGE_API_KEY=${apiKey}\n`;
+  // envPath now typically points into ~/.myraildepot/local-bridge/, which won't exist yet on a
+  // machine's very first-ever run — the persistent install dir is normally created by
+  // self-install.ts, but that hasn't run yet at this point in the bootstrap sequence.
+  mkdirSync(dirname(envPath), { recursive: true });
   if (!existsSync(envPath)) {
     appendFileSync(envPath, line.trimStart(), { mode: 0o600 });
   } else {

@@ -12,7 +12,8 @@
   },
   "private": false,
   "files": [
-    "dist"
+    "dist",
+    "assets"
   ],
   "packageManager": "pnpm@9.0.0",
   "main": "dist/main.js",
@@ -25,7 +26,7 @@
     "start": "node dist/main.js",
     "build": "nest build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "tsx --test src/**/*.spec.ts",
+    "test": "tsx --test 'src/**/*.spec.ts'",
     "lint": "eslint . --max-warnings 0"
   },
   "dependencies": {

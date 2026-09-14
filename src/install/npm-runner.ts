@@ -1,0 +1,95 @@
+import { spawn as nodeSpawn } from 'node:child_process';
+import { printWarning } from '../lib/console-ui';
+
+interface MinimalChildProcess {
+  stderr: { on(event: 'data', listener: (chunk: Buffer) => void): void } | null;
+  on(event: 'error', listener: (err: Error) => void): void;
+  on(event: 'close', listener: (code: number | null) => void): void;
+  kill(): void;
+}
+
+export type SpawnFn = (
+  command: string,
+  args: string[],
+  options: { cwd: string; shell: boolean; stdio: ['ignore', 'ignore', 'pipe'] },
+) => MinimalChildProcess;
+
+// `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
+// Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
+// event instead of ever running anything. mac/Linux never need this.
+const defaultSpawn: SpawnFn = (command, args, options) => nodeSpawn(command, args, options);
+
+// A hung `npm install`/`npm update` (a slow registry, a stuck network) would otherwise leave the
+// self-install step waiting forever with no feedback — this turns a silent hang into a reported
+// failure. 5 minutes comfortably covers a cold install of this package's modest dependency tree
+// even on a slow connection, while still bounding the worst case.
+const NPM_TIMEOUT_MS = 5 * 60 * 1000;
+
+// When `shell: true`, Node joins `[file, ...args]` into a single command-line string using plain
+// spaces, with no automatic escaping — so any argument could be split or reinterpreted by the
+// shell (not just ones containing whitespace: Windows account names can legally contain cmd.exe
+// metacharacters like `&`, `^`, `%`, `(`, `)` with no space at all, e.g. "C:\Users\A&B\..."). Quote
+// every argument unconditionally on the shell path — never conditionally on whether it happens to
+// contain a space. Quoting is only safe on that shell path in the first place: a non-shell spawn
+// passes each array element as an atomic argv entry with zero interpretation, so injecting literal
+// `"` characters there would corrupt the argument instead of protecting it.
+function quoteForShell(arg: string): string {
+  return `"${arg.replace(/"/g, '\\"')}"`;
+}
+
+function runNpm(args: string[], installDir: string, spawnImpl: SpawnFn): Promise<void> {
+  return new Promise((resolvePromise, rejectPromise) => {
+    // Only Windows needs `shell: true` (to resolve npm.cmd) — see the comment on `defaultSpawn`.
+    const useShell = process.platform === 'win32';
+    const spawnArgs = useShell ? args.map(quoteForShell) : args;
+    // stdout is intentionally 'ignore', not 'pipe': a piped stream nobody reads fills the OS pipe
+    // buffer (~64KB) once npm writes enough to it, at which point npm blocks on write() and never
+    // exits — silently and permanently hanging this promise. npm's actual errors go to stderr,
+    // which is the only stream this function needs, so there's nothing to lose by discarding
+    // stdout outright rather than collecting output nothing here would ever read.
+    const child = spawnImpl('npm', spawnArgs, { cwd: installDir, shell: useShell, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+
+    const timeout = setTimeout(() => {
+      child.kill();
+      rejectPromise(new Error(`npm ${args.join(' ')} timed out after ${NPM_TIMEOUT_MS / 1000}s`));
+    }, NPM_TIMEOUT_MS);
+
+    child.on('error', (err) => {
+      clearTimeout(timeout);
+      rejectPromise(err);
+    });
+    // Listen on 'close' rather than 'exit': per Node's docs, stdio streams "might still be open"
+    // when 'exit' fires, while 'close' fires only once stdout/stderr are fully flushed — so 'exit'
+    // risks under-reporting the stderr collected above.
+    child.on('close', (code) => {
+      clearTimeout(timeout);
+      if (code === 0) resolvePromise();
+      else rejectPromise(new Error(`npm ${args.join(' ')} exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+    });
+  });
+}
+
+/**
+ * Materializes a real, persistent copy of the package at `installDir` — the self-install step's
+ * core action. Awaited by the caller (there's nothing meaningful to do with a launcher pointing at
+ * an install that isn't finished yet), but this itself never blocks the *server* from already
+ * serving requests, since it's only ever invoked after `app.listen()` has resolved.
+ */
+export async function runNpmInstall(installDir: string, spawnImpl: SpawnFn = defaultSpawn): Promise<void> {
+  await runNpm(['install', '@myraildepot/local-bridge', '--prefix', installDir], installDir, spawnImpl);
+}
+
+/**
+ * Fire-and-forget: refreshes the persistent install in the background so the *next* launch picks
+ * up any fix. Never awaited by the caller, never throws — a failure (offline, registry down) is
+ * only ever logged as a warning, since the currently-running bridge already has everything it
+ * needs on disk and must keep serving regardless.
+ */
+export function runNpmUpdateInBackground(installDir: string, spawnImpl: SpawnFn = defaultSpawn): void {
+  runNpm(['update', '@myraildepot/local-bridge', '--prefix', installDir], installDir, spawnImpl)
+    .catch((err: unknown) => {
+      printWarning(`Background update check failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+}
