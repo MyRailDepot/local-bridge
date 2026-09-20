@@ -91,7 +91,12 @@ export async function selfInstallIfNeeded(opts: SelfInstallOptions): Promise<voi
       );
     } else {
       const persistentAssetsDir = persistIconAsset(opts.assetsDir, installDir, 'icon.png');
-      installLinuxLauncher(installDir, persistentAssetsDir, resolveLinuxDesktopDir(homeDir, opts.linuxExecImpl));
+      installLinuxLauncher(
+        installDir,
+        persistentAssetsDir,
+        resolveLinuxDesktopDir(homeDir, opts.linuxExecImpl),
+        process.execPath,
+      );
     }
 
     printStepDone('A shortcut named "MyRailDepot Bridge" was created — use it next time');

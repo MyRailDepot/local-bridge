@@ -21,12 +21,23 @@ describe('buildDesktopEntry', () => {
     const entry = buildDesktopEntry(
       '/home/nico/.myraildepot/local-bridge',
       '/home/nico/.myraildepot/local-bridge/icon.png',
+      '/usr/bin/node',
     );
     assert.match(entry, /Name=MyRailDepot Bridge/);
     assert.match(entry, /Terminal=true/);
     assert.match(entry, /Icon=\/home\/nico\/\.myraildepot\/local-bridge\/icon\.png/);
     assert.match(entry, /cd '\/home\/nico\/\.myraildepot\/local-bridge'/);
     assert.match(entry, /\.\/node_modules\/\.bin\/local-bridge/);
+  });
+
+  it('runs local-bridge via the exact node binary given, not env node — a .desktop Exec line runs through a non-interactive shell that never sources .bashrc/.zshrc, so a nvm/fnm-managed node on PATH there would otherwise be invisible', () => {
+    const entry = buildDesktopEntry(
+      '/home/nico/.myraildepot/local-bridge',
+      '/home/nico/.myraildepot/local-bridge/icon.png',
+      '/home/nico/.nvm/versions/node/v22.23.2/bin/node',
+    );
+    assert.match(entry, /'\/home\/nico\/\.nvm\/versions\/node\/v22\.23\.2\/bin\/node' \.\/node_modules\/\.bin\/local-bridge/);
+    assert.doesNotMatch(entry, /env node/);
   });
 
   it('escapes single quotes in the install dir path for bash', () => {
@@ -37,9 +48,19 @@ describe('buildDesktopEntry', () => {
     const entry = buildDesktopEntry(
       "/home/o'brien/.myraildepot/local-bridge",
       "/home/o'brien/.myraildepot/local-bridge/icon.png",
+      '/usr/bin/node',
     );
     assert.match(entry, /cd '\/home\/o'\\''brien\/\.myraildepot\/local-bridge'/);
     assert.match(entry, /Icon=\/home\/o'brien\/\.myraildepot\/local-bridge\/icon\.png/);
+  });
+
+  it('escapes single quotes in the node binary path too', () => {
+    const entry = buildDesktopEntry(
+      '/home/nico/.myraildepot/local-bridge',
+      '/home/nico/.myraildepot/local-bridge/icon.png',
+      "/home/o'brien/.nvm/versions/node/v22.23.2/bin/node",
+    );
+    assert.match(entry, /'\/home\/o'\\''brien\/\.nvm\/versions\/node\/v22\.23\.2\/bin\/node'/);
   });
 });
 
@@ -73,11 +94,13 @@ describe('installLinuxLauncher', () => {
     const assetsDir = '/fake/assets/dir';
     const desktopDir = makeTempDir();
 
-    installLinuxLauncher(installDir, assetsDir, desktopDir);
+    installLinuxLauncher(installDir, assetsDir, desktopDir, '/usr/bin/node');
 
     const desktopFilePath = join(desktopDir, 'myraildepot-bridge.desktop');
     assert.ok(existsSync(desktopFilePath));
     assert.equal(statSync(desktopFilePath).mode & 0o777, 0o755);
-    assert.match(readFileSync(desktopFilePath, 'utf8'), /Icon=\/fake\/assets\/dir\/icon\.png/);
+    const content = readFileSync(desktopFilePath, 'utf8');
+    assert.match(content, /Icon=\/fake\/assets\/dir\/icon\.png/);
+    assert.match(content, /'\/usr\/bin\/node' \.\/node_modules\/\.bin\/local-bridge/);
   });
 });

@@ -146,9 +146,18 @@ describe('selfInstallIfNeeded — ephemeral run (npx), platform linux', () => {
     // referenced from the ephemeral npx-cache assetsDir it started in — otherwise the shortcut's
     // icon goes blank the moment that cache is pruned.
     assert.equal(readFileSync(join(installDir, 'assets', 'icon.png'), 'utf8'), 'fake-png');
+    const desktopEntryContent = readFileSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop'), 'utf8');
     assert.match(
-      readFileSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop'), 'utf8'),
+      desktopEntryContent,
       new RegExp(`Icon=${join(installDir, 'assets', 'icon.png').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
+    );
+    // Regression guard: the Exec line must run the exact node binary currently executing this
+    // installer (process.execPath), not bare `env node` — a .desktop file's Exec line runs through
+    // a non-interactive, non-login shell that never sources .bashrc/.zshrc, so a nvm/fnm-managed
+    // node on PATH there is invisible even though it works fine from a real terminal.
+    assert.match(
+      desktopEntryContent,
+      new RegExp(`'${process.execPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}' \\./node_modules/\\.bin/local-bridge`),
     );
   });
 

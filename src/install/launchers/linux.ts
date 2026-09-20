@@ -21,16 +21,28 @@ export function resolveLinuxDesktopDir(homeDir: string, execImpl: ExecFn = defau
   return join(homeDir, 'Desktop');
 }
 
+// Escape single quotes in a path by replacing ' with '\''
+// This works within double quotes: the \'' becomes a literal \' when interpreted by bash
+function escapeForShell(value: string): string {
+  return value.replace(/'/g, "'\\''");
+}
+
 /**
  * A standard freedesktop .desktop entry. `Terminal=true` so the bridge's output is visible exactly
  * as on the other two OSes. GNOME requires a one-time "Allow Launching" confirmation on a .desktop
  * file created outside a package manager — known, unavoidable, and not solved here.
+ *
+ * Runs the exact `node` binary given (`nodeBin`, normally `process.execPath` — the one currently
+ * executing this installer) rather than relying on `env node` to resolve it from PATH: a
+ * `.desktop` file's Exec line is launched by the desktop environment through a non-interactive,
+ * non-login shell, which — unlike an actual terminal session — never sources `.bashrc`/`.zshrc`.
+ * Any PATH entry added there (as nvm, fnm, etc. commonly do) is invisible to it, so `env node`
+ * fails with "No such file or directory" even though `node` works fine from a real terminal.
  */
-export function buildDesktopEntry(installDir: string, iconPath: string): string {
-  // Escape single quotes in the path by replacing ' with '\''
-  // This works within double quotes: the \'' becomes a literal \' when interpreted by bash
-  const escapedDir = installDir.replace(/'/g, "'\\''");
-  const execCommand = `bash -c "cd '${escapedDir}' && ./node_modules/.bin/local-bridge; exec bash"`;
+export function buildDesktopEntry(installDir: string, iconPath: string, nodeBin: string): string {
+  const escapedDir = escapeForShell(installDir);
+  const escapedNode = escapeForShell(nodeBin);
+  const execCommand = `bash -c "cd '${escapedDir}' && '${escapedNode}' ./node_modules/.bin/local-bridge; exec bash"`;
   return `[Desktop Entry]
 Type=Application
 Name=MyRailDepot Bridge
@@ -41,11 +53,11 @@ Categories=Utility;
 `;
 }
 
-/** Writes `~/Desktop/myraildepot-bridge.desktop`, executable. */
-export function installLinuxLauncher(installDir: string, assetsDir: string, desktopDir: string): void {
+/** Writes `~/Desktop/myraildepot-bridge.desktop` (or the resolved localized equivalent), executable. */
+export function installLinuxLauncher(installDir: string, assetsDir: string, desktopDir: string, nodeBin: string): void {
   mkdirSync(desktopDir, { recursive: true });
   const iconPath = join(assetsDir, 'icon.png');
   const desktopFilePath = join(desktopDir, 'myraildepot-bridge.desktop');
-  writeFileSync(desktopFilePath, buildDesktopEntry(installDir, iconPath));
+  writeFileSync(desktopFilePath, buildDesktopEntry(installDir, iconPath, nodeBin));
   chmodSync(desktopFilePath, 0o755);
 }
