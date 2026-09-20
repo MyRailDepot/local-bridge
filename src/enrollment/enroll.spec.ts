@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ensureCredentials } from './enroll.ts';
+import { ensureCredentials, resolveEnrollmentToken } from './enroll.ts';
 
 const SAAS_BASE_URL = 'https://myraildepot.com';
 const tempDirs: string[] = [];
@@ -20,6 +20,28 @@ afterEach(() => {
 
 after(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+});
+
+describe('resolveEnrollmentToken', () => {
+  it('a CLI token always wins, even when credentials already exist', () => {
+    assert.equal(resolveEnrollmentToken('cli-token', 'env-token', true), 'cli-token');
+  });
+
+  it('a CLI token is used to enroll when no credentials exist yet', () => {
+    assert.equal(resolveEnrollmentToken('cli-token', undefined, false), 'cli-token');
+  });
+
+  it('an env token seeds enrollment when no CLI token and no existing credentials', () => {
+    assert.equal(resolveEnrollmentToken(undefined, 'env-token', false), 'env-token');
+  });
+
+  it('an env token is ignored once credentials already exist, so it cannot force a re-exchange on every restart', () => {
+    assert.equal(resolveEnrollmentToken(undefined, 'env-token', true), undefined);
+  });
+
+  it('returns undefined when neither source provides a token', () => {
+    assert.equal(resolveEnrollmentToken(undefined, undefined, false), undefined);
+  });
 });
 
 describe('ensureCredentials', () => {
@@ -291,5 +313,26 @@ describe('ensureCredentials', () => {
     assert.match(content, /^BRIDGE_API_KEY=key-new$/m);
     // The pre-existing line must survive intact, not be clobbered.
     assert.equal(content.startsWith('SOME_OTHER_VAR=already-here'), true);
+  });
+
+  it('preserves blank lines a user put between sections of their own .env', async () => {
+    mock.method(globalThis, 'fetch', (async () => ({
+      ok: true,
+      json: async () => ({ bridgeId: 'bridge-new', apiKey: 'key-new' }),
+    })) as unknown as typeof fetch);
+
+    const envPath = makeEnvPath();
+    writeFileSync(envPath, 'SAAS_BASE_URL=https://x\n\nBRIDGE_PORT=4000\n');
+
+    await ensureCredentials({
+      envPath,
+      existingBridgeId: undefined,
+      existingApiKey: undefined,
+      enrollmentToken: 'ABC123',
+      saasBaseUrl: SAAS_BASE_URL,
+    });
+
+    const content = readFileSync(envPath, 'utf8');
+    assert.equal(content, 'SAAS_BASE_URL=https://x\n\nBRIDGE_PORT=4000\nBRIDGE_ID=bridge-new\nBRIDGE_API_KEY=key-new\n');
   });
 });

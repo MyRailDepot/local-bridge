@@ -34,6 +34,22 @@ function extractErrorMessage(rawBody: string): string {
 }
 
 /**
+ * Decides which enrollment token, if any, counts as an explicit signal to (re-)enroll. A CLI
+ * argument always wins unconditionally: the user just ran the command with a token, right now.
+ * `BRIDGE_ENROLLMENT_TOKEN` from the environment is different — it commonly lives on in a process
+ * manager's persistent config (a systemd unit, a docker-compose file) well past the first
+ * successful enrollment, so it only seeds the very first run: once local credentials already
+ * exist, it must not force a re-exchange on every restart.
+ */
+export function resolveEnrollmentToken(
+  cliToken: string | undefined,
+  envToken: string | undefined,
+  hasExistingCredentials: boolean,
+): string | undefined {
+  return cliToken ?? (hasExistingCredentials ? undefined : envToken);
+}
+
+/**
  * Resolves the credentials the bridge needs to run. An explicitly-provided enrollment token always
  * wins and triggers a fresh exchange — even when local credentials already exist — because
  * providing a token is an explicit signal to (re-)enroll. This matters after a bridge is deleted
@@ -92,8 +108,13 @@ export async function ensureCredentials(opts: EnsureCredentialsOptions): Promise
  */
 function writeEnvCredentials(envPath: string, bridgeId: string, apiKey: string): void {
   const existingLines = existsSync(envPath) ? readFileSync(envPath, 'utf8').split('\n') : [];
+  // A trailing newline in the file produces one spurious empty element from split('\n') — drop
+  // only that artifact, not genuine blank lines a user may have put between sections.
+  if (existingLines.length > 0 && existingLines[existingLines.length - 1] === '') {
+    existingLines.pop();
+  }
   const keptLines = existingLines.filter(
-    (line) => line.trim() !== '' && !line.startsWith('BRIDGE_ID=') && !line.startsWith('BRIDGE_API_KEY='),
+    (line) => !line.startsWith('BRIDGE_ID=') && !line.startsWith('BRIDGE_API_KEY='),
   );
   const content = [...keptLines, `BRIDGE_ID=${bridgeId}`, `BRIDGE_API_KEY=${apiKey}`].join('\n') + '\n';
   writeFileSync(envPath, content, { mode: 0o600 });

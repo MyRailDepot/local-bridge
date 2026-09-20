@@ -11,7 +11,7 @@ import { AppModule } from './app.module';
 import { setBridgeConfig } from './bridge-config';
 import { detectLocalIp, buildLocalUrl } from './lib/network';
 import { BridgeServerService } from './registration/bridge-server.service';
-import { ensureCredentials } from './enrollment/enroll';
+import { ensureCredentials, resolveEnrollmentToken } from './enrollment/enroll';
 import { printBanner, printStep, printStepDone, printStepFailed, printInfo } from './lib/console-ui';
 import { selfInstallIfNeeded } from './install/self-install';
 import { getInstallDir } from './install/paths';
@@ -59,7 +59,11 @@ async function bootstrap(): Promise<void> {
       envPath: join(getInstallDir(), '.env'),
       existingBridgeId: process.env['BRIDGE_ID'],
       existingApiKey: process.env['BRIDGE_API_KEY'],
-      enrollmentToken: process.argv[2] ?? process.env['BRIDGE_ENROLLMENT_TOKEN'],
+      enrollmentToken: resolveEnrollmentToken(
+        process.argv[2],
+        process.env['BRIDGE_ENROLLMENT_TOKEN'],
+        Boolean(process.env['BRIDGE_ID'] && process.env['BRIDGE_API_KEY']),
+      ),
       saasBaseUrl: SAAS_BASE_URL,
     });
     bridgeId = creds.bridgeId;
