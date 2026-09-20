@@ -1,6 +1,6 @@
 {
   "name": "@myraildepot/local-bridge",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Local bridge for MyRailDepot — runs on your machine, talks to your DCC command station and to the cloud.",
   "license": "MIT",
   "repository": {
