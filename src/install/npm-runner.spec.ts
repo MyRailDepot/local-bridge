@@ -194,12 +194,12 @@ describe('defaultSpawn (real node:child_process.spawn path)', () => {
     const restorePlatform = stubPlatform('linux');
     const restoreExecPath = stubExecPath('/home/nico/.nvm/versions/node/v22.23.2/bin/node');
     const { child, emitClose } = makeFakeChild();
-    const calls: Array<{ command: string; args: string[] }> = [];
+    const calls: Array<{ command: string; args: string[]; options: { env?: Record<string, string | undefined> } }> = [];
     const spawnMock = mock.method(
       childProcess,
       'spawn',
-      (command: string, args: readonly string[]) => {
-        calls.push({ command, args: [...args] });
+      (command: string, args: readonly string[], options: { env?: Record<string, string | undefined> }) => {
+        calls.push({ command, args: [...args], options });
         queueMicrotask(() => emitClose(0));
         return child as unknown as ReturnType<typeof childProcess.spawn>;
       },
@@ -220,6 +220,13 @@ describe('defaultSpawn (real node:child_process.spawn path)', () => {
     }
 
     assert.equal(calls[0]!.command, '/home/nico/.nvm/versions/node/v22.23.2/bin/npm');
+    // Regression guard: npm's own CLI entry point is itself a `#!/usr/bin/env node` script —
+    // finding npm's file on disk isn't enough on its own; the child process's PATH must also
+    // include node's directory, or npm re-invoking itself via `env node` fails the exact same way
+    // one level deeper (confirmed in practice: this was the very next failure after the
+    // resolveNpmCommand-only fix — "npm update ... exited with code 127: env: node: No such file
+    // or directory").
+    assert.ok(calls[0]!.options.env?.['PATH']?.startsWith('/home/nico/.nvm/versions/node/v22.23.2/bin'));
   });
 
   it('on linux/mac: falls back to bare "npm" (resolved via PATH) when no npm binary sits next to the running node', async () => {

@@ -1,6 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import fs from 'node:fs';
-import { dirname, join } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
 import { printWarning } from '../lib/console-ui';
 
 interface MinimalChildProcess {
@@ -30,6 +30,17 @@ function resolveNpmCommand(): string {
   return fs.existsSync(colocated) ? colocated : 'npm';
 }
 
+// `npm`'s own CLI entry point is itself a `#!/usr/bin/env node` script — finding *npm's file* on
+// disk (resolveNpmCommand above) isn't enough, because the moment the OS runs that shebang, it
+// does its own `env node` lookup through the SAME deficient PATH this whole file exists to work
+// around, and fails the exact same way one level deeper (confirmed in practice: fixing
+// resolveNpmCommand alone changed the failure from "spawn npm ENOENT" to npm itself exiting 127
+// with "env: node: No such file or directory"). Prepending node's own directory to PATH for the
+// child process fixes every shebang lookup npm (or anything it spawns) might do, not just this one.
+function pathWithNodeDir(): string {
+  return `${dirname(process.execPath)}${delimiter}${process.env['PATH'] ?? ''}`;
+}
+
 // `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
 // Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
 // event instead of ever running anything. mac/Linux never need this.
@@ -43,8 +54,13 @@ function resolveNpmCommand(): string {
 // have assembled internally.
 const defaultSpawn: SpawnFn = (command, args, options) => {
   const resolvedCommand = command === 'npm' ? resolveNpmCommand() : command;
-  if (options.shell) return nodeSpawn([resolvedCommand, ...args].join(' '), [], options);
-  return nodeSpawn(resolvedCommand, args, options);
+  // Windows adds Node to the system PATH, not a shell rc file the launch context might have
+  // skipped — never the same failure mode, so left exactly as before.
+  const spawnOptions = process.platform === 'win32'
+    ? options
+    : { ...options, env: { ...process.env, PATH: pathWithNodeDir() } };
+  if (options.shell) return nodeSpawn([resolvedCommand, ...args].join(' '), [], spawnOptions);
+  return nodeSpawn(resolvedCommand, args, spawnOptions);
 };
 
 // A hung `npm install`/`npm update` (a slow registry, a stuck network) would otherwise leave the
