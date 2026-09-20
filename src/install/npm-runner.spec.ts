@@ -2,6 +2,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import childProcess from 'node:child_process';
+import fs from 'node:fs';
 import { runNpmInstall, runNpmUpdateInBackground, type SpawnFn } from './npm-runner.ts';
 
 type FakeChild = EventEmitter & { stderr: EventEmitter; kill(): void; killCallCount: number };
@@ -27,6 +28,13 @@ function stubPlatform(value: NodeJS.Platform): () => void {
   const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
   Object.defineProperty(process, 'platform', { value, configurable: true });
   return () => { Object.defineProperty(process, 'platform', original); };
+}
+
+/** Same pattern as stubPlatform, for process.execPath. */
+function stubExecPath(value: string): () => void {
+  const original = Object.getOwnPropertyDescriptor(process, 'execPath')!;
+  Object.defineProperty(process, 'execPath', { value, configurable: true });
+  return () => { Object.defineProperty(process, 'execPath', original); };
 }
 
 interface SpawnCallOptions {
@@ -180,6 +188,66 @@ describe('defaultSpawn (real node:child_process.spawn path)', () => {
       'npm "install" "@myraildepot/local-bridge" "--prefix" "/fake/install/dir"',
     );
     assert.deepEqual(calls[0]!.args, []);
+  });
+
+  it('on linux/mac: resolves npm colocated with the currently-running node binary, not via PATH — a bridge launched from the Linux desktop shortcut runs with a PATH that never sourced nvm/fnm\'s .bashrc lines, even though node and npm sit in the exact same directory', async () => {
+    const restorePlatform = stubPlatform('linux');
+    const restoreExecPath = stubExecPath('/home/nico/.nvm/versions/node/v22.23.2/bin/node');
+    const { child, emitClose } = makeFakeChild();
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const spawnMock = mock.method(
+      childProcess,
+      'spawn',
+      (command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] });
+        queueMicrotask(() => emitClose(0));
+        return child as unknown as ReturnType<typeof childProcess.spawn>;
+      },
+    );
+    const existsMock = mock.method(
+      fs,
+      'existsSync',
+      (p: string) => p === '/home/nico/.nvm/versions/node/v22.23.2/bin/npm',
+    );
+
+    try {
+      await runNpmInstall('/fake/install/dir');
+    } finally {
+      spawnMock.mock.restore();
+      existsMock.mock.restore();
+      restoreExecPath();
+      restorePlatform();
+    }
+
+    assert.equal(calls[0]!.command, '/home/nico/.nvm/versions/node/v22.23.2/bin/npm');
+  });
+
+  it('on linux/mac: falls back to bare "npm" (resolved via PATH) when no npm binary sits next to the running node', async () => {
+    const restorePlatform = stubPlatform('darwin');
+    const restoreExecPath = stubExecPath('/usr/local/bin/node');
+    const { child, emitClose } = makeFakeChild();
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const spawnMock = mock.method(
+      childProcess,
+      'spawn',
+      (command: string, args: readonly string[]) => {
+        calls.push({ command, args: [...args] });
+        queueMicrotask(() => emitClose(0));
+        return child as unknown as ReturnType<typeof childProcess.spawn>;
+      },
+    );
+    const existsMock = mock.method(fs, 'existsSync', () => false);
+
+    try {
+      await runNpmInstall('/fake/install/dir');
+    } finally {
+      spawnMock.mock.restore();
+      existsMock.mock.restore();
+      restoreExecPath();
+      restorePlatform();
+    }
+
+    assert.equal(calls[0]!.command, 'npm');
   });
 });
 

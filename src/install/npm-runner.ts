@@ -1,4 +1,6 @@
 import { spawn as nodeSpawn } from 'node:child_process';
+import fs from 'node:fs';
+import { dirname, join } from 'node:path';
 import { printWarning } from '../lib/console-ui';
 
 interface MinimalChildProcess {
@@ -14,6 +16,20 @@ export type SpawnFn = (
   options: { cwd: string; shell: boolean; stdio: ['ignore', 'ignore', 'pipe'] },
 ) => MinimalChildProcess;
 
+// `npm` normally lives right next to `node` in the same bin directory, regardless of install
+// method (nvm, system package, Volta, the official installer...). Resolving it this way sidesteps
+// `process.env.PATH` entirely on mac/Linux — necessary because this process can be launched (e.g.
+// from the Linux desktop shortcut) through a non-interactive shell that never sourced the nvm/fnm
+// lines in .bashrc/.zshrc responsible for putting that bin directory on PATH in the first place,
+// even though the currently-running `node` is undeniably sitting in exactly that directory. On
+// Windows, `npm` resolves to `npm.cmd` via PATH + `shell: true` (see defaultSpawn below) — that
+// PATH comes from the system environment, not a shell rc file, so it's not the same failure mode.
+function resolveNpmCommand(): string {
+  if (process.platform === 'win32') return 'npm';
+  const colocated = join(dirname(process.execPath), 'npm');
+  return fs.existsSync(colocated) ? colocated : 'npm';
+}
+
 // `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
 // Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
 // event instead of ever running anything. mac/Linux never need this.
@@ -26,8 +42,9 @@ export type SpawnFn = (
 // without changing the actual command line executed — it's the exact string Node would otherwise
 // have assembled internally.
 const defaultSpawn: SpawnFn = (command, args, options) => {
-  if (options.shell) return nodeSpawn([command, ...args].join(' '), [], options);
-  return nodeSpawn(command, args, options);
+  const resolvedCommand = command === 'npm' ? resolveNpmCommand() : command;
+  if (options.shell) return nodeSpawn([resolvedCommand, ...args].join(' '), [], options);
+  return nodeSpawn(resolvedCommand, args, options);
 };
 
 // A hung `npm install`/`npm update` (a slow registry, a stuck network) would otherwise leave the
