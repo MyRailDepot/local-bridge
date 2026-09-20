@@ -1,5 +1,25 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+
+export type ExecFn = (command: string, args: string[]) => string;
+
+const defaultExec: ExecFn = (command, args) => execFileSync(command, args, { encoding: 'utf8' });
+
+/**
+ * Resolves the user's real Desktop folder via `xdg-user-dir DESKTOP`. On a localized system
+ * (French, German, ...) this is genuinely NOT `~/Desktop` — XDG user-dirs actually relocates the
+ * folder on disk (e.g. `~/Bureau` in French), unlike Windows, where the underlying folder name
+ * stays "Desktop" regardless of the UI language. Falls back to `~/Desktop` when the command is
+ * unavailable (minimal/server distros without xdg-user-dirs installed) or returns nothing usable.
+ */
+export function resolveLinuxDesktopDir(homeDir: string, execImpl: ExecFn = defaultExec): string {
+  try {
+    const output = execImpl('xdg-user-dir', ['DESKTOP']).trim();
+    if (output) return output;
+  } catch { /* xdg-user-dirs not installed — fall back below */ }
+  return join(homeDir, 'Desktop');
+}
 
 /**
  * A standard freedesktop .desktop entry. `Terminal=true` so the bridge's output is visible exactly

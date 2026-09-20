@@ -7,7 +7,7 @@ import { writeInstallEnv, type InstalledCredentials } from './env-writer';
 import { runNpmInstall, runNpmUpdateInBackground, type SpawnFn as NpmSpawnFn } from './npm-runner';
 import { installMacLauncher, resolveMacAppsDir } from './launchers/mac';
 import { installWindowsLauncher, type SpawnFn as WindowsSpawnFn } from './launchers/windows';
-import { installLinuxLauncher } from './launchers/linux';
+import { installLinuxLauncher, resolveLinuxDesktopDir, type ExecFn as LinuxExecFn } from './launchers/linux';
 import { printStep, printStepDone, printStepFailed } from '../lib/console-ui';
 
 const defaultWindowsSpawn: WindowsSpawnFn = (command, args) => nodeSpawn(command, args);
@@ -23,6 +23,10 @@ export interface SelfInstallOptions {
   systemAppsDir?: string;
   npmSpawnImpl?: NpmSpawnFn;
   windowsSpawnImpl?: WindowsSpawnFn;
+  /** Override for the `xdg-user-dir DESKTOP` call used to find the real (possibly localized)
+   *  Linux desktop dir; defaults to actually running that command — see resolveLinuxDesktopDir.
+   *  Tests must pass a fake one to avoid depending on the real machine's locale/tools. */
+  linuxExecImpl?: LinuxExecFn;
 }
 
 /**
@@ -87,7 +91,7 @@ export async function selfInstallIfNeeded(opts: SelfInstallOptions): Promise<voi
       );
     } else {
       const persistentAssetsDir = persistIconAsset(opts.assetsDir, installDir, 'icon.png');
-      installLinuxLauncher(installDir, persistentAssetsDir, join(homeDir, 'Desktop'));
+      installLinuxLauncher(installDir, persistentAssetsDir, resolveLinuxDesktopDir(homeDir, opts.linuxExecImpl));
     }
 
     printStepDone('A shortcut named "MyRailDepot Bridge" was created — use it next time');

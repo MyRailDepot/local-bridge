@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildDesktopEntry, installLinuxLauncher } from './linux.ts';
+import { buildDesktopEntry, installLinuxLauncher, resolveLinuxDesktopDir, type ExecFn } from './linux.ts';
 
 const tempDirs: string[] = [];
 function makeTempDir(): string {
@@ -40,6 +40,30 @@ describe('buildDesktopEntry', () => {
     );
     assert.match(entry, /cd '\/home\/o'\\''brien\/\.myraildepot\/local-bridge'/);
     assert.match(entry, /Icon=\/home\/o'brien\/\.myraildepot\/local-bridge\/icon\.png/);
+  });
+});
+
+describe('resolveLinuxDesktopDir', () => {
+  it('uses xdg-user-dir DESKTOP\'s answer, not a hardcoded ~/Desktop — the folder is actually renamed on disk on a localized system (e.g. ~/Bureau in French), unlike Windows where the underlying name stays "Desktop" regardless of UI language', () => {
+    const execImpl: ExecFn = (command, args) => {
+      assert.equal(command, 'xdg-user-dir');
+      assert.deepEqual(args, ['DESKTOP']);
+      return '/home/nico/Bureau\n';
+    };
+
+    assert.equal(resolveLinuxDesktopDir('/home/nico', execImpl), '/home/nico/Bureau');
+  });
+
+  it('falls back to ~/Desktop when xdg-user-dir is unavailable (minimal/server distros without xdg-user-dirs installed)', () => {
+    const execImpl: ExecFn = () => { throw new Error('spawn xdg-user-dir ENOENT'); };
+
+    assert.equal(resolveLinuxDesktopDir('/home/nico', execImpl), join('/home/nico', 'Desktop'));
+  });
+
+  it('falls back to ~/Desktop when xdg-user-dir returns nothing usable', () => {
+    const execImpl: ExecFn = () => '   \n';
+
+    assert.equal(resolveLinuxDesktopDir('/home/nico', execImpl), join('/home/nico', 'Desktop'));
   });
 });
 

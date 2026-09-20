@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { selfInstallIfNeeded } from './self-install.ts';
 import type { SpawnFn as NpmSpawnFn } from './npm-runner.ts';
 import type { SpawnFn as WindowsSpawnFn } from './launchers/windows.ts';
+import type { ExecFn as LinuxExecFn } from './launchers/linux.ts';
 
 const tempDirs: string[] = [];
 function makeTempDir(): string {
@@ -124,6 +125,10 @@ describe('selfInstallIfNeeded — ephemeral run (npx), platform linux', () => {
     const homeDir = makeTempDir();
     const assetsDir = makeTempDir();
     writeFileSync(join(assetsDir, 'icon.png'), 'fake-png');
+    // Fixed answer, not the real xdg-user-dir — the localization-specific case (e.g. a French
+    // ~/Bureau) is covered by the dedicated test below; this one only cares about the general
+    // wiring (icon persistence, .desktop content), so it pins the "English default" answer.
+    const linuxExecImpl: LinuxExecFn = () => join(homeDir, 'Desktop');
 
     await selfInstallIfNeeded({
       currentPackageRoot: '/some/npx/cache/path',
@@ -132,6 +137,7 @@ describe('selfInstallIfNeeded — ephemeral run (npx), platform linux', () => {
       platform: 'linux',
       homeDir,
       npmSpawnImpl: fakeNpmSpawn([]),
+      linuxExecImpl,
     });
 
     const installDir = join(homeDir, '.myraildepot', 'local-bridge');
@@ -144,6 +150,30 @@ describe('selfInstallIfNeeded — ephemeral run (npx), platform linux', () => {
       readFileSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop'), 'utf8'),
       new RegExp(`Icon=${join(installDir, 'assets', 'icon.png').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`),
     );
+  });
+
+  it('creates the .desktop launcher in the real (localized) desktop dir reported by xdg-user-dir, not a hardcoded ~/Desktop', async () => {
+    const homeDir = makeTempDir();
+    const assetsDir = makeTempDir();
+    writeFileSync(join(assetsDir, 'icon.png'), 'fake-png');
+    // Simulates a French-locale machine, where XDG user-dirs actually relocates the folder on
+    // disk — the exact bug report this fixes: the shortcut landed in ~/Desktop, a folder the
+    // user's (French) file manager never shows as the desktop.
+    const frenchDesktopDir = join(homeDir, 'Bureau');
+    const linuxExecImpl: LinuxExecFn = () => frenchDesktopDir;
+
+    await selfInstallIfNeeded({
+      currentPackageRoot: '/some/npx/cache/path',
+      assetsDir,
+      credentials: { bridgeId: 'b1', apiKey: 'k1' },
+      platform: 'linux',
+      homeDir,
+      npmSpawnImpl: fakeNpmSpawn([]),
+      linuxExecImpl,
+    });
+
+    assert.ok(existsSync(join(frenchDesktopDir, 'myraildepot-bridge.desktop')));
+    assert.equal(existsSync(join(homeDir, 'Desktop', 'myraildepot-bridge.desktop')), false);
   });
 });
 
