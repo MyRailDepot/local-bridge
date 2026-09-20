@@ -145,8 +145,41 @@ describe('defaultSpawn (real node:child_process.spawn path)', () => {
     }
 
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.command, 'npm');
     assert.deepEqual(calls[0]!.options, { cwd: '/fake/install/dir', shell: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  });
+
+  it('joins command+args into a single already-quoted string with empty args when shell is true, avoiding Node’s DEP0190 warning', async () => {
+    const restorePlatform = stubPlatform('win32');
+    const { child, emitClose } = makeFakeChild();
+    const calls: Array<{ command: string; args: string[]; options: unknown }> = [];
+    const spawnMock = mock.method(
+      childProcess,
+      'spawn',
+      (command: string, args: readonly string[], options: unknown) => {
+        calls.push({ command, args: [...args], options });
+        queueMicrotask(() => emitClose(0));
+        return child as unknown as ReturnType<typeof childProcess.spawn>;
+      },
+    );
+
+    try {
+      await runNpmInstall('/fake/install/dir');
+    } finally {
+      spawnMock.mock.restore();
+      restorePlatform();
+    }
+
+    assert.equal(calls.length, 1);
+    // Node emits DEP0190 whenever shell:true is combined with a non-empty args array, regardless
+    // of whether the caller already escaped each argument (which runNpm's quoteForShell does) —
+    // it can't verify that from the outside. Passing the whole already-quoted command line as a
+    // single string with empty args avoids the code path that triggers the warning, with no
+    // change in the actual command line executed.
+    assert.equal(
+      calls[0]!.command,
+      'npm "install" "@myraildepot/local-bridge" "--prefix" "/fake/install/dir"',
+    );
+    assert.deepEqual(calls[0]!.args, []);
   });
 });
 

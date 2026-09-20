@@ -17,7 +17,18 @@ export type SpawnFn = (
 // `shell: true` is required on the real spawn path: on Windows, `npm` resolves to `npm.cmd`, and
 // Node can only launch a `.cmd`/`.bat` file through a shell — without it, spawn emits an `'error'`
 // event instead of ever running anything. mac/Linux never need this.
-const defaultSpawn: SpawnFn = (command, args, options) => nodeSpawn(command, args, options);
+//
+// When shell is true, Node emits DEP0190 ("Passing args to a child process with shell option true
+// can lead to security vulnerabilities...") for any non-empty `args` array, regardless of whether
+// the caller already escaped each argument — which `runNpm`'s `quoteForShell` already does. Node
+// can't verify that from the outside, so it warns unconditionally. Folding `args` into `command` as
+// a single, already-quoted string (with an empty `args` array) sidesteps the warning entirely
+// without changing the actual command line executed — it's the exact string Node would otherwise
+// have assembled internally.
+const defaultSpawn: SpawnFn = (command, args, options) => {
+  if (options.shell) return nodeSpawn([command, ...args].join(' '), [], options);
+  return nodeSpawn(command, args, options);
+};
 
 // A hung `npm install`/`npm update` (a slow registry, a stuck network) would otherwise leave the
 // self-install step waiting forever with no feedback — this turns a silent hang into a reported
