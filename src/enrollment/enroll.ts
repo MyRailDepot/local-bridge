@@ -1,4 +1,4 @@
-import { appendFileSync, chmodSync, existsSync, mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 export interface BridgeCredentials {
@@ -34,20 +34,23 @@ function extractErrorMessage(rawBody: string): string {
 }
 
 /**
- * Resolves the credentials the bridge needs to run. If they already exist (a prior enrollment wrote
- * them to `.env`), returns them with no network call. Otherwise, exchanges the one-time enrollment
- * token for real credentials and appends them to the `.env` file at `envPath`.
+ * Resolves the credentials the bridge needs to run. An explicitly-provided enrollment token always
+ * wins and triggers a fresh exchange — even when local credentials already exist — because
+ * providing a token is an explicit signal to (re-)enroll. This matters after a bridge is deleted
+ * server-side and re-declared: this machine's `.env` still has the old, now-revoked
+ * BRIDGE_ID/BRIDGE_API_KEY, and silently trusting them instead of the fresh token would
+ * re-register with dead credentials. Only when no token is given do existing credentials get
+ * reused, with no network call — the normal restart-from-the-shortcut path.
  */
 export async function ensureCredentials(opts: EnsureCredentialsOptions): Promise<BridgeCredentials> {
   const { envPath, existingBridgeId, existingApiKey, saasBaseUrl } = opts;
   const enrollmentToken = opts.enrollmentToken?.trim();
   const doFetch = opts.fetchImpl ?? fetch;
 
-  if (existingBridgeId && existingApiKey) {
-    return { bridgeId: existingBridgeId, apiKey: existingApiKey };
-  }
-
   if (!enrollmentToken) {
+    if (existingBridgeId && existingApiKey) {
+      return { bridgeId: existingBridgeId, apiKey: existingApiKey };
+    }
     throw new Error(
       'No bridge credentials found and no enrollment token provided. ' +
       'Run: npx @myraildepot/local-bridge <TOKEN> — get a token from the "Declare a bridge" screen.',
@@ -71,18 +74,29 @@ export async function ensureCredentials(opts: EnsureCredentialsOptions): Promise
   }
   const { bridgeId, apiKey } = body;
 
-  const line = `\nBRIDGE_ID=${bridgeId}\nBRIDGE_API_KEY=${apiKey}\n`;
   // envPath now typically points into ~/.myraildepot/local-bridge/, which won't exist yet on a
   // machine's very first-ever run — the persistent install dir is normally created by
   // self-install.ts, but that hasn't run yet at this point in the bootstrap sequence.
   mkdirSync(dirname(envPath), { recursive: true });
-  if (!existsSync(envPath)) {
-    appendFileSync(envPath, line.trimStart(), { mode: 0o600 });
-  } else {
-    appendFileSync(envPath, line);
-  }
-  // Secrets: never leave .env world/group-readable, regardless of the umask that created it.
-  chmodSync(envPath, 0o600);
+  writeEnvCredentials(envPath, bridgeId, apiKey);
 
   return { bridgeId, apiKey };
+}
+
+/**
+ * Sets BRIDGE_ID/BRIDGE_API_KEY in the `.env` file at `envPath`, replacing any existing occurrence
+ * of either key in place instead of appending a duplicate — a stale pair from a previous
+ * enrollment must not linger alongside the fresh one (Node's env-file loading isn't a contract
+ * worth relying on for which duplicate wins). Any other line — a user's own BRIDGE_PORT or
+ * SAAS_BASE_URL override, say — is preserved untouched.
+ */
+function writeEnvCredentials(envPath: string, bridgeId: string, apiKey: string): void {
+  const existingLines = existsSync(envPath) ? readFileSync(envPath, 'utf8').split('\n') : [];
+  const keptLines = existingLines.filter(
+    (line) => line.trim() !== '' && !line.startsWith('BRIDGE_ID=') && !line.startsWith('BRIDGE_API_KEY='),
+  );
+  const content = [...keptLines, `BRIDGE_ID=${bridgeId}`, `BRIDGE_API_KEY=${apiKey}`].join('\n') + '\n';
+  writeFileSync(envPath, content, { mode: 0o600 });
+  // Secrets: never leave .env world/group-readable, regardless of the umask that created it.
+  chmodSync(envPath, 0o600);
 }

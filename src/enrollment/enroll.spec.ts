@@ -219,6 +219,55 @@ describe('ensureCredentials', () => {
     assert.match(content, /^BRIDGE_API_KEY=key-new$/m);
   });
 
+  it('re-exchanges the token even when local credentials already exist, ignoring the stale pair', async () => {
+    // Regression: a bridge deleted server-side and re-declared hands out a fresh token, but this
+    // machine's .env still has the old, now-revoked BRIDGE_ID/BRIDGE_API_KEY. A token must always
+    // win over whatever is already on disk.
+    const fetchMock = mock.fn(async (_url: string, _init: RequestInit) => ({
+      ok: true,
+      json: async () => ({ bridgeId: 'bridge-fresh', apiKey: 'key-fresh' }),
+    }));
+    mock.method(globalThis, 'fetch', fetchMock as unknown as typeof fetch);
+
+    const result = await ensureCredentials({
+      envPath: makeEnvPath(),
+      existingBridgeId: 'bridge-stale',
+      existingApiKey: 'key-stale',
+      enrollmentToken: 'FRESH-TOKEN',
+      saasBaseUrl: SAAS_BASE_URL,
+    });
+
+    assert.deepEqual(result, { bridgeId: 'bridge-fresh', apiKey: 'key-fresh' });
+    assert.equal(fetchMock.mock.calls.length, 1);
+  });
+
+  it('replaces a stale BRIDGE_ID/BRIDGE_API_KEY pair in .env instead of duplicating it', async () => {
+    mock.method(globalThis, 'fetch', (async () => ({
+      ok: true,
+      json: async () => ({ bridgeId: 'bridge-fresh', apiKey: 'key-fresh' }),
+    })) as unknown as typeof fetch);
+
+    const envPath = makeEnvPath();
+    writeFileSync(envPath, 'SOME_OTHER_VAR=already-here\nBRIDGE_ID=bridge-stale\nBRIDGE_API_KEY=key-stale\n');
+
+    await ensureCredentials({
+      envPath,
+      existingBridgeId: undefined,
+      existingApiKey: undefined,
+      enrollmentToken: 'FRESH-TOKEN',
+      saasBaseUrl: SAAS_BASE_URL,
+    });
+
+    const content = readFileSync(envPath, 'utf8');
+    assert.match(content, /^SOME_OTHER_VAR=already-here$/m);
+    assert.match(content, /^BRIDGE_ID=bridge-fresh$/m);
+    assert.match(content, /^BRIDGE_API_KEY=key-fresh$/m);
+    assert.doesNotMatch(content, /bridge-stale/);
+    assert.doesNotMatch(content, /key-stale/);
+    assert.equal((content.match(/^BRIDGE_ID=/gm) ?? []).length, 1);
+    assert.equal((content.match(/^BRIDGE_API_KEY=/gm) ?? []).length, 1);
+  });
+
   it('appends BRIDGE_ID/BRIDGE_API_KEY to a .env file that already has other content', async () => {
     mock.method(globalThis, 'fetch', (async () => ({
       ok: true,
