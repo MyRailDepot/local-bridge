@@ -87,3 +87,11 @@ test('track power: 503 / 502 and session unchanged on failure', async () => {
     assert.equal(failed.session.getSession().trackPower, false);
   }
 });
+
+test('e-stop with a train id no longer in the session still stops everything', async () => {
+  const { controller, session, train, sent } = setup();
+  session.setSpeed(train.id, 9, 'forward');
+  assert.deepEqual(await controller.estop('released-train-id'), { stopped: true });
+  assert.deepEqual(sent, ['estop']);
+  assert.equal(session.getSession().trains[0]!.speedStep, 0);
+});
