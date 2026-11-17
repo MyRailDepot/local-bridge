@@ -151,9 +151,10 @@ export class DriveSessionController {
   @UseGuards(PermissionGuard)
   @RequirePermission('dcc:drive')
   @HttpCode(200)
-  async estop(@Param('id') id: string) {
+  async estop(@Param('id') _id: string) {
+    // The stop is global: it never depends on the train in the URL. A cab whose train was just
+    // released (or a stale id) must still reach the command station, not get a 404.
     const { trains } = this.session.getSession();
-    if (!trains.find(t => t.id === id)) throw new NotFoundException();
 
     // Reset all trains to speed 0 in session first (triggers WS broadcast): on a failure the
     // cab shows 0 and its e-stop failure message, never a running speed.
