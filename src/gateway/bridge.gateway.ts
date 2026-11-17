@@ -171,7 +171,8 @@ export class BridgeGateway implements OnGatewayInit, OnGatewayConnection, OnGate
       this.eStopTimer = setTimeout(() => {
         this.eStopTimer = null;
         this.logger.warn('Grace period elapsed — sending E-STOP to all centrals.');
-        void this.centralManager.emergencyStopAll();
+        // Failures are already logged per station; nobody is left to report them to.
+        this.centralManager.emergencyStopAll().catch(() => {});
       }, ESTOP_GRACE_MS);
     }
   }
