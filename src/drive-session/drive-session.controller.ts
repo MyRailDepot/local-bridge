@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, HttpCode,
+  BadRequestException, Body, Controller, Delete, HttpCode, HttpException, HttpStatus,
   NotFoundException, Param, Patch, Post, Put, UseGuards,
 } from '@nestjs/common';
 import type { Block } from '../protocol/block.types';
@@ -7,6 +7,8 @@ import type { SessionAccessory, Train } from '../protocol/train.types';
 import { PermissionGuard } from '../auth/permission.guard';
 import { RequirePermission } from '../auth/require-permission.decorator';
 import { CentralManagerService } from '../central/central-manager.service';
+import { CentralCommandError } from '../central/central.types';
+import type { CentralCommandErrorCode } from '../central/central.types';
 import { DriveSessionService } from './drive-session.service';
 import { BlockSessionService } from '../block-session/block-session.service';
 
@@ -22,6 +24,25 @@ class SetAccessoryStateDto {
   position?: 'active' | 'inactive';
   aspectId?: string;
   aspectValue?: number; // required when aspectId is provided; 0–31
+}
+
+const COMMAND_ERROR_STATUS: Record<CentralCommandErrorCode, HttpStatus> = {
+  NO_CENTRAL:          HttpStatus.SERVICE_UNAVAILABLE, // 503
+  CENTRAL_SEND_FAILED: HttpStatus.BAD_GATEWAY,         // 502
+  ESTOP_UNCONFIRMED:   HttpStatus.GATEWAY_TIMEOUT,     // 504
+};
+
+/** Runs a drive command and turns a CentralCommandError into the matching HTTP error. */
+async function commandOrHttpError(command: Promise<unknown>): Promise<void> {
+  try {
+    await command;
+  } catch (err) {
+    if (err instanceof CentralCommandError) {
+      const status = COMMAND_ERROR_STATUS[err.code];
+      throw new HttpException({ statusCode: status, code: err.code, message: err.message }, status);
+    }
+    throw err;
+  }
 }
 
 @Controller('session')
@@ -44,7 +65,8 @@ export class DriveSessionController {
     for (const train of trains) {
       for (const loco of (train.locos ?? [])) {
         const { engineSpeedSteps } = this.dccSpeed(0, loco.speedSteps ?? 128);
-        this.centralManager.setLocoSpeed(loco.dccAddress, 0, true, engineSpeedSteps);
+        // Best effort: release paths do not report station failures (already logged).
+        this.centralManager.setLocoSpeed(loco.dccAddress, 0, true, engineSpeedSteps).catch(() => {});
       }
     }
   }
@@ -71,7 +93,7 @@ export class DriveSessionController {
   @Patch('trains/:id')
   @UseGuards(PermissionGuard)
   @RequirePermission('dcc:drive')
-  setSpeed(@Param('id') id: string, @Body() body: SetSpeedDto) {
+  async setSpeed(@Param('id') id: string, @Body() body: SetSpeedDto) {
     const step = Number(body.speedStep);
     if (!Number.isInteger(step) || step < 0 || step > 28) {
       throw new BadRequestException('speedStep must be an integer 0–28');
@@ -89,11 +111,12 @@ export class DriveSessionController {
     // DCC hardware only knows forward/reverse + speed; neutral = speed 0, keep last direction
     const dccForward = direction === 'neutral' ? train.direction !== 'reverse' : direction === 'forward';
 
-    this.session.setSpeed(id, actualStep, direction);
-    for (const loco of train.locos) {
+    // The session changes only once a station took the command, so it reflects the track.
+    await commandOrHttpError(Promise.all(train.locos.map(loco => {
       const { speed, engineSpeedSteps } = this.dccSpeed(actualStep, loco.speedSteps ?? 128);
-      this.centralManager.setLocoSpeed(loco.dccAddress, speed, dccForward, engineSpeedSteps);
-    }
+      return this.centralManager.setLocoSpeed(loco.dccAddress, speed, dccForward, engineSpeedSteps);
+    })));
+    this.session.setSpeed(id, actualStep, direction);
     return { speedStep: actualStep, direction };
   }
 
@@ -102,7 +125,7 @@ export class DriveSessionController {
   @Put('trains/:id/functions/:fn')
   @UseGuards(PermissionGuard)
   @RequirePermission('dcc:drive')
-  setFunction(
+  async setFunction(
     @Param('id') id: string,
     @Param('fn') fnParam: string,
     @Body() body: SetFunctionDto,
@@ -115,9 +138,9 @@ export class DriveSessionController {
     if (!train) throw new NotFoundException();
 
     const active = Boolean(body.active);
-    for (const loco of train.locos) {
-      this.centralManager.setLocoFunction(loco.dccAddress, fn, active);
-    }
+    await commandOrHttpError(Promise.all(
+      train.locos.map(loco => this.centralManager.setLocoFunction(loco.dccAddress, fn, active)),
+    ));
     this.session.setFunction(id, fn, active);
     return { fn, active };
   }
@@ -128,17 +151,19 @@ export class DriveSessionController {
   @UseGuards(PermissionGuard)
   @RequirePermission('dcc:drive')
   @HttpCode(200)
-  estop(@Param('id') id: string) {
+  async estop(@Param('id') id: string) {
     const { trains } = this.session.getSession();
     if (!trains.find(t => t.id === id)) throw new NotFoundException();
 
-    // Reset all trains to speed 0 in session (triggers WS broadcast)
+    // Reset all trains to speed 0 in session first (triggers WS broadcast): on a failure the
+    // cab shows 0 and its e-stop failure message, never a running speed.
     for (const t of trains) {
       this.session.setSpeed(t.id, 0, t.direction ?? 'forward');
     }
 
-    // Global Z21 emergency stop — all decoders on the track stop immediately
-    this.centralManager.emergencyStopAll().catch(() => {});
+    // Global Z21 emergency stop, answered only once a station confirmed it
+    // (503 no station, 502 send failed, 504 not confirmed: the cab retries).
+    await commandOrHttpError(this.centralManager.emergencyStopAll());
 
     return { stopped: true };
   }
@@ -149,9 +174,9 @@ export class DriveSessionController {
   @UseGuards(PermissionGuard)
   @RequirePermission('dcc:drive')
   @HttpCode(200)
-  setTrackPower(@Body() body: SetTrackPowerDto) {
+  async setTrackPower(@Body() body: SetTrackPowerDto) {
     const on = Boolean(body.on);
-    this.centralManager.setTrackPower(on);
+    await commandOrHttpError(this.centralManager.setTrackPower(on));
     this.session.setTrackPower(on);
     return { trackPower: on };
   }
@@ -178,7 +203,8 @@ export class DriveSessionController {
     const dccFwd = train.direction !== 'reverse';
     if (step > 0) {
       const { speed, engineSpeedSteps } = this.dccSpeed(step, ss ?? 128);
-      this.centralManager.setLocoSpeed(addr, speed, dccFwd, engineSpeedSteps);
+      // Best effort: the loco is added either way; a failure is logged per station.
+      this.centralManager.setLocoSpeed(addr, speed, dccFwd, engineSpeedSteps).catch(() => {});
     }
     return { train: updated };
   }

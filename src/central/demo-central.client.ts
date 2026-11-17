@@ -51,15 +51,15 @@ export class DemoCentralClient extends EventEmitter {
     };
   }
 
-  setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): void {
+  async setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): Promise<void> {
     this.logger.log(`[${this.id}] setLocoSpeed(addr=${address}, speed=${speed}, fwd=${forward}, steps=${engineSpeedSteps ?? 128}) [demo]`);
   }
 
-  setTrackPower(on: boolean): void {
+  async setTrackPower(on: boolean): Promise<void> {
     this.logger.log(`[${this.id}] setTrackPower(${on}) [demo]`);
   }
 
-  setLocoFunction(address: number, fn: number, active: boolean): void {
+  async setLocoFunction(address: number, fn: number, active: boolean): Promise<void> {
     this.logger.log(`[${this.id}] setLocoFunction(addr=${address}, fn=${fn}, active=${active}) [demo]`);
   }
 

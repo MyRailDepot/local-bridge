@@ -1,6 +1,7 @@
 import { Injectable, OnModuleDestroy, OnModuleInit, Logger } from '@nestjs/common';
 import { Subject } from 'rxjs';
 import { getBridgeConfig } from '../bridge-config';
+import { CentralCommandError, EstopUnconfirmedError } from './central.types';
 import type { CentralConfig, CentralConnectionStatus, CentralStatus } from './central.types';
 import { Z21Client } from './z21/z21.client';
 import type { OccupancyUpdate } from './z21/z21.client';
@@ -53,22 +54,19 @@ export class CentralManagerService implements OnModuleInit, OnModuleDestroy {
     return this.clients.get(centralId);
   }
 
-  setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): void {
-    for (const client of this.clients.values()) {
-      if (client.status === 'connected') client.setLocoSpeed(address, speed, forward, engineSpeedSteps);
-    }
+  // Drive commands resolve once at least one connected station took the command and
+  // reject with a CentralCommandError otherwise (see sendToConnected).
+
+  setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): Promise<void> {
+    return this.sendToConnected(`setLocoSpeed(${address})`, c => c.setLocoSpeed(address, speed, forward, engineSpeedSteps));
   }
 
-  setTrackPower(on: boolean): void {
-    for (const client of this.clients.values()) {
-      if (client.status === 'connected') client.setTrackPower(on);
-    }
+  setTrackPower(on: boolean): Promise<void> {
+    return this.sendToConnected(`setTrackPower(${on})`, c => c.setTrackPower(on));
   }
 
-  setLocoFunction(address: number, fn: number, active: boolean): void {
-    for (const client of this.clients.values()) {
-      if (client.status === 'connected') client.setLocoFunction(address, fn, active);
-    }
+  setLocoFunction(address: number, fn: number, active: boolean): Promise<void> {
+    return this.sendToConnected(`setLocoFunction(${address}, F${fn})`, c => c.setLocoFunction(address, fn, active));
   }
 
   setAccessoryOutput(dccAddress: number, activate: boolean, momentary: boolean): void {
@@ -103,10 +101,40 @@ export class CentralManagerService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** E-stop on every connected station in parallel; resolves once one of them confirmed it. */
   async emergencyStopAll(): Promise<void> {
-    const connected = Array.from(this.clients.values()).filter(c => c.status === 'connected');
-    await Promise.allSettled(connected.map(c => c.emergencyStop()));
-    this.logger.warn(`E-STOP sent to ${connected.length} central(s).`);
+    await this.sendToConnected('E-STOP', c => c.emergencyStop());
+    this.logger.warn('E-STOP confirmed.');
+  }
+
+  /**
+   * Sends one command to every connected station in parallel.
+   * Resolves when at least one station took it. Rejects with NO_CENTRAL when none is
+   * connected, ESTOP_UNCONFIRMED when every station sent the e-stop but none confirmed it,
+   * CENTRAL_SEND_FAILED otherwise. Each failure is logged with its station id.
+   */
+  private async sendToConnected(label: string, send: (client: AnyClient) => Promise<void>): Promise<void> {
+    const ids = Array.from(this.clients.entries()).filter(([, c]) => c.status === 'connected');
+    if (ids.length === 0) {
+      this.logger.warn(`${label}: no command station connected.`);
+      throw new CentralCommandError('NO_CENTRAL', 'No command station connected');
+    }
+    const results = await Promise.allSettled(ids.map(([, c]) => {
+      try { return send(c); } catch (err) { return Promise.reject(err); }
+    }));
+    const failures: unknown[] = [];
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        failures.push(r.reason);
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        this.logger.warn(`[${ids[i]![0]}] ${label} failed: ${msg}`);
+      }
+    });
+    if (failures.length < results.length) return;
+    if (failures.every(f => f instanceof EstopUnconfirmedError)) {
+      throw new CentralCommandError('ESTOP_UNCONFIRMED', 'No command station confirmed the emergency stop');
+    }
+    throw new CentralCommandError('CENTRAL_SEND_FAILED', 'The command could not be sent to any command station');
   }
 
   private initZ21Client(config: CentralConfig): void {

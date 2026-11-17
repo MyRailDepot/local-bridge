@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { Logger } from '@nestjs/common';
 import { Z21Client as Z21LibClient } from 'z21-client';
 import type { FeedbackBus, OccupancyChannel } from 'z21-client';
+import { EstopUnconfirmedError } from '../central.types';
 import type { CentralStatus } from '../central.types';
 
 /**
@@ -20,6 +21,9 @@ const CONNECT_PING_INTERVAL_MS = 5_000;
 const IDLE_TIMEOUT_MS = 60_000;
 // How long to wait for a pong before declaring the connection dead
 const PONG_TIMEOUT_MS = 5_000;
+// How long an e-stop waits for the Z21's LAN_X_BC_STOPPED broadcast. Kept well under the
+// cab's 1 s per-attempt timeout so a missing confirmation still leaves room for a retry.
+export const ESTOP_CONFIRM_TIMEOUT_MS = 400;
 
 // Events that prove the Z21 is alive but don't confirm connection on their own.
 // 'status', 'trackPower', and 'occupancy' are handled separately.
@@ -85,6 +89,7 @@ export class Z21Client extends EventEmitter {
     this.lib.on('stopped', () => {
       this.logger.debug(`[${this.id}] ← LAN_X_BC_STOPPED`);
       this.onReceivedFromZ21();
+      this.emit('stopped');
     });
 
     // All other Z21 events: proof the connection is alive, reset idle timer
@@ -119,21 +124,26 @@ export class Z21Client extends EventEmitter {
   get engines() { return this.lib.engines; }
   get system()  { return this.lib.system; }
 
-  setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): void {
-    this.lib.engines.setDriveEngine(address, speed, forward, engineSpeedSteps);
+  // Command methods reject when the command could not be sent, so the manager can
+  // tell the cab that it reached no station. UDP gives no per-command acknowledgement.
+
+  setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): Promise<void> {
+    // z21-client's setDriveEngine is synchronous and drops its send promise, so only a
+    // synchronous throw can be reported here (see the spec's implementation notes).
+    try {
+      this.lib.engines.setDriveEngine(address, speed, forward, engineSpeedSteps);
+      return Promise.resolve();
+    } catch (err) {
+      return Promise.reject(err instanceof Error ? err : new Error(String(err)));
+    }
   }
 
-  setTrackPower(on: boolean): void {
-    const op = on ? this.lib.system.setTrackPowerOn() : this.lib.system.setTrackPowerOff();
-    op.catch((err: unknown) => {
-      this.logger.warn(`[${this.id}] setTrackPower(${on}) failed: ${err instanceof Error ? err.message : String(err)}`);
-    });
+  setTrackPower(on: boolean): Promise<void> {
+    return on ? this.lib.system.setTrackPowerOn() : this.lib.system.setTrackPowerOff();
   }
 
-  setLocoFunction(address: number, fn: number, active: boolean): void {
-    // Fire-and-forget DCC command; the bus repeats each packet, so a dropped
-    // promise here is acceptable.
-    void this.lib.engines.setEngineFunctions(address, fn, active ? 'on' : 'off');
+  setLocoFunction(address: number, fn: number, active: boolean): Promise<void> {
+    return this.lib.engines.setEngineFunctions(address, fn, active ? 'on' : 'off');
   }
 
   // Pulse duration for solenoid accessories. The DCC bus repeats each packet 2-4 times,
@@ -267,9 +277,31 @@ export class Z21Client extends EventEmitter {
     this.emit('status', next);
   }
 
-  async emergencyStop(): Promise<void> {
-    await this.lib.system.emergencyStop().catch((err: unknown) => {
-      this.logger.warn(`[${this.id}] emergencyStop failed: ${err instanceof Error ? err.message : String(err)}`);
+  /**
+   * Sends LAN_X_SET_STOP and resolves once the Z21 broadcasts LAN_X_BC_STOPPED.
+   * Rejects on a send error, or with EstopUnconfirmedError when the broadcast does not
+   * arrive within ESTOP_CONFIRM_TIMEOUT_MS. The listener is armed before sending so a
+   * fast broadcast is never missed.
+   */
+  emergencyStop(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const onStopped = () => {
+        if (timer) clearTimeout(timer);
+        resolve();
+      };
+      const fail = (err: Error) => {
+        if (timer) clearTimeout(timer);
+        this.off('stopped', onStopped);
+        reject(err);
+      };
+      this.once('stopped', onStopped);
+      timer = setTimeout(() => {
+        fail(new EstopUnconfirmedError(`[${this.id}] no LAN_X_BC_STOPPED within ${ESTOP_CONFIRM_TIMEOUT_MS}ms`));
+      }, ESTOP_CONFIRM_TIMEOUT_MS);
+      this.lib.system.emergencyStop().catch((err: unknown) => {
+        fail(err instanceof Error ? err : new Error(String(err)));
+      });
     });
   }
 
