@@ -36,8 +36,8 @@ importers:
         specifier: ^8.21.3
         version: 8.21.3
       z21-client:
-        specifier: ^2.0.0
-        version: 2.0.0
+        specifier: ^2.1.0
+        version: 2.1.0
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -1981,8 +1981,8 @@ packages:
     resolution: {integrity: sha512-U/PBtDf35ff0D8X8D0jfdzHYEPFxAI7jJlxZXwCSez5M3190m+QobIfh+sWDWSHMCWWJN2AWamkegn6vr6YBTw==}
     engines: {node: '>=18'}
 
-  z21-client@2.0.0:
-    resolution: {integrity: sha512-naYha82k9xuXZT+gO4Eu7YvxRtYaXst9S+5Ku+maWbRt0UQX4io8+k0VIhJVerqVLOdRsA+qQ0vdR8gQI1z1sg==}
+  z21-client@2.1.0:
+    resolution: {integrity: sha512-uSWunF09wLwbXYPDOxUs7Zir7Zv2C71jZYeVQo3aFF/9dDNE5CJ9nepWmJgVI+5uNXWUcA0tswoAygbpSCqG9A==}
     engines: {node: '>=22'}
 
 snapshots:
@@ -3931,4 +3931,4 @@ snapshots:
 
   yoctocolors-cjs@2.1.3: {}
 
-  z21-client@2.0.0: {}
+  z21-client@2.1.0: {}
