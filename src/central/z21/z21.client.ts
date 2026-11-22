@@ -128,11 +128,12 @@ export class Z21Client extends EventEmitter {
   // tell the cab that it reached no station. UDP gives no per-command acknowledgement.
 
   setLocoSpeed(address: number, speed: number, forward: boolean, engineSpeedSteps?: number): Promise<void> {
-    // z21-client's setDriveEngine is synchronous and drops its send promise, so only a
-    // synchronous throw can be reported here (see the spec's implementation notes).
+    // z21-client >= 2.1 returns the send promise (z21-client#17): it settles once the datagram
+    // has left, without waiting for the station's answer (that comes through the broadcasts),
+    // and rejects when it could not be sent. Callers that do not await it stay safe: the
+    // library observes the promise itself.
     try {
-      this.lib.engines.setDriveEngine(address, speed, forward, engineSpeedSteps);
-      return Promise.resolve();
+      return this.lib.engines.setDriveEngine(address, speed, forward, engineSpeedSteps);
     } catch (err) {
       return Promise.reject(err instanceof Error ? err : new Error(String(err)));
     }

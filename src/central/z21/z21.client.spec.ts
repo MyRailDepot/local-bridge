@@ -42,3 +42,24 @@ test('emergencyStop rejects at once when the send fails', async (t) => {
   assert.ok(Date.now() - started < ESTOP_CONFIRM_TIMEOUT_MS, 'no wait for the confirmation');
   assert.equal(client.listenerCount('stopped'), 0);
 });
+
+/** A Z21Client whose library speed send is replaced by `send`. */
+function clientWithSpeedSend(send: () => Promise<void>) {
+  const client = new Z21Client('test', '127.0.0.1', 21105);
+  const lib = (client as unknown as { lib: { engines: { setDriveEngine: () => Promise<void> } } }).lib;
+  lib.engines.setDriveEngine = send;
+  return client;
+}
+
+test('setLocoSpeed resolves once the speed command is sent', async (t) => {
+  const client = clientWithSpeedSend(() => Promise.resolve());
+  t.after(() => client.destroy());
+  await client.setLocoSpeed(3, 10, true);
+});
+
+test('setLocoSpeed rejects when the speed command could not be sent (z21-client#17)', async (t) => {
+  const client = clientWithSpeedSend(() => Promise.reject(new Error('EHOSTUNREACH')));
+  t.after(() => client.destroy());
+  await assert.rejects(client.setLocoSpeed(3, 10, true), /EHOSTUNREACH/);
+});
+
